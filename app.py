@@ -5,14 +5,42 @@ st.set_page_config(page_title="Shazam Clone", layout="wide", page_icon="🎵")
 
 import numpy as np
 import json
-import assemblyai as aai
-from sentence_transformers import SentenceTransformer
 import os
 from pathlib import Path
 import time
-import plotly.express as px
 import pandas as pd
 from datetime import datetime
+
+# Check for required packages and install if missing
+import sys
+import subprocess
+
+# Function to check and install missing packages
+def install_package(package):
+    try:
+        __import__(package)
+    except ImportError:
+        st.warning(f"Installing required package: {package}")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+        st.experimental_rerun()
+
+# Install required packages
+install_package("assemblyai")
+install_package("sentence_transformers")
+
+# Now try imports with better error handling
+try:
+    import assemblyai as aai
+    from sentence_transformers import SentenceTransformer
+    try:
+        import plotly.express as px
+    except ImportError:
+        install_package("plotly")
+        import plotly.express as px
+except Exception as e:
+    st.error(f"Error importing required libraries: {str(e)}")
+    st.info("Please make sure all required libraries are installed by running: pip install streamlit numpy assemblyai sentence-transformers plotly pandas")
+    st.stop()
 
 # Initialize session state variables if they don't exist
 if "transcribed_text" not in st.session_state:
@@ -37,21 +65,52 @@ def get_api_key():
         if api_key:
             return api_key
         else:
-            st.error("⚠ API key not found! Please add it to Streamlit secrets or environment variables.")
-            st.stop()
+            # If running locally and .streamlit/secrets.toml doesn't exist
+            # Prompt for API key in the app
+            if "api_key" not in st.session_state:
+                st.session_state.api_key = ""
+            
+            api_key = st.text_input(
+                "Enter your AssemblyAI API key:",
+                value=st.session_state.api_key,
+                type="password"
+            )
+            st.session_state.api_key = api_key
+            
+            if not api_key:
+                st.warning("⚠ Please enter your AssemblyAI API key to continue.")
+                st.info("You can get an API key from https://www.assemblyai.com/")
+                st.stop()
+            return api_key
 
 # Set the API key safely
-aai.settings.api_key = get_api_key()
+try:
+    aai.settings.api_key = get_api_key()
+except Exception as e:
+    st.error(f"Error setting AssemblyAI API key: {str(e)}")
+    st.info("Please check your API key and try again.")
+    st.stop()
 
 # Create a simple in-memory database instead of using ChromaDB
 class SimpleVectorDB:
-    def __init__(self):  # Fixed: Changed _init_ to __init__
+    def __init__(self):
         self.documents = []
         self.embeddings = []
         self.metadata = []
-        self.model = SentenceTransformer("all-MiniLM-L6-v2")
+        self.model = None
+        
+    def initialize_model(self):
+        if self.model is None:
+            try:
+                self.model = SentenceTransformer("all-MiniLM-L6-v2")
+            except Exception as e:
+                st.error(f"Error loading SentenceTransformer model: {str(e)}")
+                st.info("Try reloading the page or check your internet connection.")
+                st.stop()
         
     def add(self, documents, metadatas=None, embeddings=None):
+        self.initialize_model()
+        
         if embeddings is None:
             embeddings = self.model.encode(documents, show_progress_bar=False)
         
@@ -125,7 +184,12 @@ sample_metadata = [
 
 # Add sample data if the database is empty
 if not db.documents:
-    db.add(sample_subtitles, sample_metadata)
+    try:
+        db.initialize_model()
+        db.add(sample_subtitles, sample_metadata)
+    except Exception as e:
+        st.error(f"Error loading sample data: {str(e)}")
+        # Continue without sample data
 
 def transcribe_audio(audio_file):
     """Transcribes audio using AssemblyAI with enhanced error handling and profiling."""
@@ -189,8 +253,8 @@ def retrieve_and_display_results(query, top_n):
         return json.dumps([{"Result": "No transcription text available for search."}], indent=4)
 
     try:
-        model = SentenceTransformer("all-MiniLM-L6-v2")
-        query_embedding = model.encode([query], show_progress_bar=False).tolist()
+        db.initialize_model()
+        query_embedding = db.model.encode([query], show_progress_bar=False).tolist()
 
         results = db.query(
             query_embeddings=query_embedding,
@@ -420,7 +484,7 @@ def main():
             with col2:
                 if st.button("🧹 Clear", use_container_width=True):
                     clear_all()
-                    st.rerun()
+                    st.experimental_rerun()
         
         # Display performance metrics
         display_metrics()
@@ -496,5 +560,5 @@ def main():
         - Multi-language support
         """)
 
-if __name__ == "__main__":  # Fixed: Changed _name_ to __name__
+if __name__ == "__main__":
     main()
