@@ -4,3 +4,5 @@ numpy>=1.22.0
 plotly>=5.13.0
 sentence-transformers>=2.2.2
 assemblyai>=0.10.0
+torch>=1.11.0
+transformers>=4.30.0
