@@ -2,5 +2,6 @@ streamlit==1.31.0
 numpy==1.26.4
 assemblyai==0.26.0
 sentence-transformers==2.6.1
-chromadb==0.4.24
+chromadb==0.4.15
 torch==2.2.1
+hnswlib==0.8.0
