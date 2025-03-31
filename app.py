@@ -43,9 +43,13 @@ class SimpleVectorDB:
         
     def initialize_model(self):
         if self.model is None:
-            with st.spinner("Loading embedding model..."):
-                self.model = SentenceTransformer("all-MiniLM-L6-v2")
-            st.session_state.db_initialized = True
+            try:
+                with st.spinner("Loading embedding model..."):
+                    self.model = SentenceTransformer("all-MiniLM-L6-v2")
+                st.session_state.db_initialized = True
+            except Exception as e:
+                st.error(f"Failed to load embedding model: {str(e)}. Please try again later or contact support.")
+                st.stop()
         
     def add_chunks(self, document, metadata, chunk_size=10, overlap=3):
         words = document.split()
@@ -105,7 +109,12 @@ def get_vector_db():
         db.add_chunks(subtitle, metadata)
     return db
 
-db = get_vector_db()
+# Initialize the database
+try:
+    db = get_vector_db()
+except Exception as e:
+    st.error(f"Failed to initialize database: {str(e)}. App cannot proceed.")
+    st.stop()
 
 def transcribe_audio(audio_file):
     start_time = time.time()
