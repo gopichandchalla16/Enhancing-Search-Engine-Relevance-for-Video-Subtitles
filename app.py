@@ -25,9 +25,19 @@ except KeyError:
     st.error("❌ AssemblyAI API key not found. Please set it in Streamlit secrets as 'ASSEMBLYAI_API_KEY'.")
     st.stop()
 
-# ChromaDB Setup (in-memory for Streamlit Cloud)
-client = chromadb.Client(chromadb.config.Settings(is_persistent=False))
-collection = client.get_or_create_collection(name="subtitle_chunks")
+# ChromaDB Setup with error handling
+try:
+    chroma_settings = chromadb.config.Settings(
+        is_persistent=False,
+        anonymized_telemetry=False  # Disable telemetry for simplicity
+    )
+    client = chromadb.Client(chroma_settings)
+    collection = client.get_or_create_collection(name="subtitle_chunks")
+except Exception as e:
+    st.error(f"Failed to initialize ChromaDB: {str(e)}. Using minimal functionality.")
+    # Fallback: Initialize with basic in-memory client
+    client = chromadb.Client()
+    collection = client.get_or_create_collection(name="subtitle_chunks")
 
 # Populate sample data if collection is empty
 @st.cache_resource
@@ -47,15 +57,18 @@ def initialize_sample_data():
             {"subtitle_name": "The Lord of the Rings", "subtitle_id": "45678"},
             {"subtitle_name": "Forrest Gump", "subtitle_id": "56789"}
         ]
-        model = SentenceTransformer("all-MiniLM-L6-v2")
-        embeddings = model.encode(sample_subtitles, show_progress_bar=False).tolist()
-        ids = [f"chunk_{i}" for i in range(len(sample_subtitles))]
-        collection.add(
-            documents=sample_subtitles,
-            metadatas=sample_metadata,
-            embeddings=embeddings,
-            ids=ids
-        )
+        try:
+            model = SentenceTransformer("all-MiniLM-L6-v2")
+            embeddings = model.encode(sample_subtitles, show_progress_bar=False).tolist()
+            ids = [f"chunk_{i}" for i in range(len(sample_subtitles))]
+            collection.add(
+                documents=sample_subtitles,
+                metadatas=sample_metadata,
+                embeddings=embeddings,
+                ids=ids
+            )
+        except Exception as e:
+            st.warning(f"Failed to initialize sample data: {str(e)}. Search functionality may be limited.")
     return collection
 
 # Initialize sample data
@@ -67,15 +80,22 @@ def transcribe_audio(audio_file):
         return "Please upload an audio file.", None
     try:
         with st.spinner("Transcribing audio..."):
+            temp_file = "temp_audio_file"
+            with open(temp_file, "wb") as f:
+                f.write(audio_file.getbuffer())
             config = aai.TranscriptionConfig(language_code="en")
             transcriber = aai.Transcriber(config=config)
-            transcript = transcriber.transcribe(audio_file)
+            transcript = transcriber.transcribe(temp_file)
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
             return transcript.text if transcript.text else "No transcription available.", transcript.text
     except Exception as e:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
         return f"Error transcribing audio: {str(e)}", None
 
 def retrieve_and_display_results(query, top_n):
-    """Retrieves top Lus subtitle search results based on query."""
+    """Retrieves top N subtitle search results based on query."""
     if not query or "Error" in query:
         return json.dumps([{"Result": "No valid transcription available."}], indent=4)
     try:
