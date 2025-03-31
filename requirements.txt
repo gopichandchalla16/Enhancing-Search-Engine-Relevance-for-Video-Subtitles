@@ -1,9 +1,8 @@
-streamlit>=1.24.0
-numpy>=1.22.0
-assemblyai>=0.10.0
-sentence-transformers>=2.2.2
-chromadb>=0.4.0
-torch>=1.11.0
-transformers>=4.30.0
-requests>=2.28.0
-backoff>=2.2.1
+streamlit==1.31.0
+numpy==1.26.4
+assemblyai==0.26.0
+sentence-transformers==2.6.1
+chromadb==0.4.24
+backoff==2.2.1
+requests==2.31.0
+torch==2.2.1
