@@ -1,4 +1,6 @@
 streamlit==1.25.0
-whisper==1.0
+whisper==1.0.1
+torch==2.0.1+cu117  # CUDA version for GPU acceleration (adjust based on your system)
 pydub==0.25.1
-torch==2.0.1  # Required for Whisper model
+numpy==1.24.3       # Required by Whisper and PyTorch
+ffmpeg-python==0.2.0  # For audio processing
