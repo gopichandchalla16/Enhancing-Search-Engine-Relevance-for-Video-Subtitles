@@ -1,8 +1,6 @@
-streamlit
-assemblyai
-numpy
-json5
-sentence-transformers
-plotly
-pandas
-datetime
+streamlit==1.28.0
+numpy==1.24.3
+assemblyai==0.5.0
+sentence-transformers==2.2.2
+chromadb==0.4.18
+python-dotenv==1.0.0
