@@ -4,16 +4,28 @@ import tempfile
 import os
 from pydub import AudioSegment
 
-# Initialize Whisper model globally to avoid reloading it multiple times
+# Cache the Whisper model to avoid reloading it
 @st.cache_resource
 def load_model():
-    return whisper.load_model("base")
+    try:
+        return whisper.load_model("base")
+    except Exception as e:
+        st.error(f"Error loading Whisper model: {e}")
+        return None
 
 def transcribe_audio(audio_file_path):
     """Transcribe audio using Whisper."""
     model = load_model()
-    result = model.transcribe(audio_file_path)
-    return result["text"], result["segments"]
+    if model is None:
+        st.error("Transcription model could not be loaded.")
+        return None, None
+    
+    try:
+        result = model.transcribe(audio_file_path)
+        return result["text"], result["segments"]
+    except Exception as e:
+        st.error(f"Error during transcription: {e}")
+        return None, None
 
 def generate_srt(segments, filename):
     """Generate SRT file from transcription segments."""
@@ -25,9 +37,13 @@ def generate_srt(segments, filename):
         srt_content += f"{i + 1}\n{start_time} --> {end_time}\n{text}\n\n"
     
     srt_filename = f"{os.path.splitext(filename)[0]}.srt"
-    with open(srt_filename, "w") as srt_file:
-        srt_file.write(srt_content)
-    return srt_filename
+    try:
+        with open(srt_filename, "w") as srt_file:
+            srt_file.write(srt_content)
+        return srt_filename
+    except Exception as e:
+        st.error(f"Error generating SRT file: {e}")
+        return None
 
 def format_timestamp(seconds):
     """Format timestamp for SRT (hh:mm:ss,ms)."""
@@ -37,13 +53,22 @@ def format_timestamp(seconds):
     milliseconds = int((seconds % 1) * 1000)
     return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
 
+def clean_up_temp_files(*files):
+    """Clean up temporary files."""
+    for file_path in files:
+        try:
+            if file_path and os.path.exists(file_path):
+                os.unlink(file_path)
+        except Exception as e:
+            st.error(f"Error deleting temporary file {file_path}: {e}")
+
 def main():
     st.set_page_config(page_title="Audio to Subtitles", layout="wide")
     
     # Header Section
     st.title("🎙️ Audio to Subtitles Converter")
     st.markdown("""
-        Upload an audio file to transcribe it into text and generate subtitles (SRT format). 
+        Upload an audio file to transcribe it into text and generate subtitles (SRT format).
         This app supports large audio files and provides real-time progress updates.
     """)
 
@@ -55,43 +80,60 @@ def main():
         st.audio(uploaded_file, format="audio/wav", start_time=0)
 
         # Process the uploaded file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
-            tmp_file.write(uploaded_file.getvalue())
-            tmp_file_path = tmp_file.name
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
+                tmp_file.write(uploaded_file.getvalue())
+                tmp_file_path = tmp_file.name
+        except Exception as e:
+            st.error(f"Error creating temporary file: {e}")
+            return
 
         # Convert to WAV if necessary
-        if uploaded_file.type != "audio/wav":
-            audio = AudioSegment.from_file(tmp_file_path, format=uploaded_file.type.split("/")[1])
-            wav_path = tmp_file_path + ".wav"
-            audio.export(wav_path, format="wav")
-        else:
-            wav_path = tmp_file_path
+        try:
+            if uploaded_file.type != "audio/wav":
+                audio = AudioSegment.from_file(tmp_file_path, format=uploaded_file.type.split("/")[1])
+                wav_path = tmp_file_path + ".wav"
+                audio.export(wav_path, format="wav")
+            else:
+                wav_path = tmp_file_path
+        except Exception as e:
+            st.error(f"Error converting audio to WAV: {e}")
+            clean_up_temp_files(tmp_file_path)
+            return
 
         # Transcription Button
         if st.button("Transcribe Audio"):
             with st.spinner("Transcribing audio... This may take a while for large files."):
                 transcription_text, segments = transcribe_audio(wav_path)
-                st.subheader("Transcribed Text")
-                st.text_area("Transcription", transcription_text, height=300)
+                if transcription_text:
+                    st.subheader("Transcribed Text")
+                    st.text_area("Transcription", transcription_text, height=300)
 
-                # Generate SRT File
-                srt_file = generate_srt(segments, uploaded_file.name)
+                    # Generate SRT File
+                    srt_file = generate_srt(segments, uploaded_file.name)
 
-                # Provide Download Option for SRT File
-                with open(srt_file, "r") as file:
-                    srt_content = file.read()
-                    st.download_button(
-                        label="📥 Download Subtitles (SRT)",
-                        data=srt_content,
-                        file_name=os.path.basename(srt_file),
-                        mime="text/plain"
-                    )
-
+                    if srt_file:
+                        # Provide Download Option for SRT File
+                        try:
+                            with open(srt_file, "r") as file:
+                                srt_content = file.read()
+                                st.download_button(
+                                    label="📥 Download Subtitles (SRT)",
+                                    data=srt_content,
+                                    file_name=os.path.basename(srt_file),
+                                    mime="text/plain"
+                                )
+                        except Exception as e:
+                            st.error(f"Error providing SRT file download: {e}")
+                        finally:
+                            clean_up_temp_files(tmp_file_path, wav_path, srt_file)
+                    else:
+                        st.error("Failed to generate SRT file.")
+                else:
+                    st.error("Failed to transcribe audio.")
+                
                 # Clean up temporary files
-                os.unlink(tmp_file_path)
-                if uploaded_file.type != "audio/wav":
-                    os.unlink(wav_path)
-                os.unlink(srt_file)
+                clean_up_temp_files(tmp_file_path, wav_path)
 
 if __name__ == "__main__":
     main()
