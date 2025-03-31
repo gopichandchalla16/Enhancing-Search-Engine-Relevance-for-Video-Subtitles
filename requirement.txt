@@ -1,8 +1,2 @@
-streamlit>=1.28.0
-numpy>=1.24.3
-assemblyai>=0.5.0
-sentence-transformers>=2.2.2
-python-dotenv>=1.0.0
-plotly>=5.18.0
-pandas>=2.0.0
-pathlib>=1.0.1
+streamlit
+plotly
