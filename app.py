@@ -8,6 +8,8 @@ from datetime import datetime
 import plotly.express as px
 import assemblyai as aai
 from sentence_transformers import SentenceTransformer
+import requests
+import backoff
 
 # Set page config as the first Streamlit command
 st.set_page_config(page_title="Video Subtitle Search Engine", layout="wide", page_icon="🎬")
@@ -41,14 +43,24 @@ class SimpleVectorDB:
         self.metadata = []
         self.model = None
         
+    @backoff.on_exception(backoff.expo, Exception, max_tries=3, max_time=60)
     def initialize_model(self):
         if self.model is None:
             try:
-                with st.spinner("Loading embedding model..."):
+                with st.spinner("Loading embedding model (this may take a moment)..."):
+                    # Check internet connectivity
+                    response = requests.get("https://huggingface.co", timeout=10)
+                    if response.status_code != 200:
+                        raise Exception("Cannot reach Hugging Face servers.")
+                    
                     self.model = SentenceTransformer("all-MiniLM-L6-v2")
                 st.session_state.db_initialized = True
             except Exception as e:
-                st.error(f"Failed to load embedding model: {str(e)}. Please try again later or contact support.")
+                st.error(
+                    f"Failed to load embedding model: {str(e)}. "
+                    "This may be due to a network issue. Please check your internet connection, "
+                    "wait a moment, and try rebooting the app. If the issue persists, contact support."
+                )
                 st.stop()
         
     def add_chunks(self, document, metadata, chunk_size=10, overlap=3):
