@@ -1,45 +1,35 @@
 import streamlit as st
-
-# Set page config must be the first Streamlit command
-st.set_page_config(page_title="Shazam Clone", layout="wide", page_icon="🎵")
-
+import pandas as pd
 import numpy as np
 import json
 import os
-from pathlib import Path
-import time
-import pandas as pd
-from datetime import datetime
-
-# Check for required packages and install if missing
 import sys
-import subprocess
+import time
+from datetime import datetime
+import plotly.express as px
 
-# Function to check and install missing packages
-def install_package(package):
-    try:
-        __import__(package)
-    except ImportError:
-        st.warning(f"Installing required package: {package}")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-        st.experimental_rerun()
+# Set page config must be the first Streamlit command
+st.set_page_config(page_title="Video Subtitle Search Engine", layout="wide", page_icon="🎬")
 
-# Install required packages
-install_package("assemblyai")
-install_package("sentence_transformers")
+# Create a requirements.txt file first instead of installing packages on the fly
+if not os.path.exists("requirements.txt"):
+    with open("requirements.txt", "w") as f:
+        f.write("streamlit>=1.24.0\n")
+        f.write("numpy>=1.22.0\n")
+        f.write("pandas>=1.5.0\n")
+        f.write("plotly>=5.13.0\n")
+        f.write("sentence-transformers>=2.2.2\n")
+        f.write("assemblyai>=0.10.0\n")
+    
+    st.warning("Created requirements.txt file. Please restart the app or run: pip install -r requirements.txt")
+    st.stop()
 
-# Now try imports with better error handling
+# Import required packages with better error handling
 try:
     import assemblyai as aai
     from sentence_transformers import SentenceTransformer
-    try:
-        import plotly.express as px
-    except ImportError:
-        install_package("plotly")
-        import plotly.express as px
-except Exception as e:
-    st.error(f"Error importing required libraries: {str(e)}")
-    st.info("Please make sure all required libraries are installed by running: pip install streamlit numpy assemblyai sentence-transformers plotly pandas")
+except ImportError:
+    st.error("Required packages are missing. Please install them by running: pip install -r requirements.txt")
     st.stop()
 
 # Initialize session state variables if they don't exist
@@ -53,6 +43,8 @@ if "confidence_score" not in st.session_state:
     st.session_state.confidence_score = None
 if "processing_time" not in st.session_state:
     st.session_state.processing_time = None
+if "db_initialized" not in st.session_state:
+    st.session_state.db_initialized = False
 
 # Securely handle AssemblyAI API key
 def get_api_key():
@@ -91,7 +83,7 @@ except Exception as e:
     st.info("Please check your API key and try again.")
     st.stop()
 
-# Create a simple in-memory database instead of using ChromaDB
+# Create a simple in-memory database for vector embeddings
 class SimpleVectorDB:
     def __init__(self):
         self.documents = []
@@ -102,24 +94,55 @@ class SimpleVectorDB:
     def initialize_model(self):
         if self.model is None:
             try:
-                self.model = SentenceTransformer("all-MiniLM-L6-v2")
+                with st.spinner("Loading embedding model..."):
+                    # Using all-MiniLM-L6-v2 as it's faster and has good performance
+                    self.model = SentenceTransformer("all-MiniLM-L6-v2")
+                st.session_state.db_initialized = True
             except Exception as e:
                 st.error(f"Error loading SentenceTransformer model: {str(e)}")
                 st.info("Try reloading the page or check your internet connection.")
                 st.stop()
         
     def add(self, documents, metadatas=None, embeddings=None):
+        """Add documents and their embeddings to the database"""
         self.initialize_model()
         
         if embeddings is None:
-            embeddings = self.model.encode(documents, show_progress_bar=False)
+            with st.spinner("Generating embeddings..."):
+                embeddings = self.model.encode(documents, show_progress_bar=False)
         
         for i, doc in enumerate(documents):
             self.documents.append(doc)
             self.embeddings.append(embeddings[i])
             self.metadata.append(metadatas[i] if metadatas else {})
+    
+    def add_chunks(self, document, metadata=None, chunk_size=128, overlap=20):
+        """Chunk a document and add the chunks to the database"""
+        # Split the document into words
+        words = document.split()
+        chunks = []
+        chunk_metadatas = []
+        
+        # Create chunks with overlap
+        for i in range(0, len(words), chunk_size - overlap):
+            chunk = " ".join(words[i:i + chunk_size])
+            if not chunk:  # Skip empty chunks
+                continue
+                
+            chunks.append(chunk)
+            
+            # Create metadata for the chunk with position information
+            chunk_metadata = metadata.copy() if metadata else {}
+            chunk_metadata["chunk_id"] = f"{metadata.get('subtitle_id', 'unknown')}_{i//chunk_size}"
+            chunk_metadata["start_pos"] = i
+            chunk_metadata["end_pos"] = min(i + chunk_size, len(words))
+            chunk_metadatas.append(chunk_metadata)
+        
+        # Add the chunks to the database
+        self.add(chunks, chunk_metadatas)
             
     def query(self, query_embeddings, n_results=5, include=None):
+        """Find the most similar documents to the query"""
         if not self.embeddings:
             return {"documents": [[]], "metadatas": [[]], "distances": [[]]}
             
@@ -128,15 +151,15 @@ class SimpleVectorDB:
         # Compute cosine similarity
         similarities = []
         for emb in self.embeddings:
-            # Improved similarity calculation with normalization
-            dot_product = sum(a*b for a, b in zip(query_embedding, emb))
-            magnitude1 = sum(a*a for a in query_embedding) ** 0.5
-            magnitude2 = sum(b*b for b in emb) ** 0.5
+            # Cosine similarity calculation
+            dot_product = np.dot(query_embedding, emb)
+            magnitude1 = np.linalg.norm(query_embedding)
+            magnitude2 = np.linalg.norm(emb)
             sim = dot_product / (magnitude1 * magnitude2) if magnitude1 * magnitude2 > 0 else 0
             similarities.append(sim)
             
         # Get top n results
-        top_indices = sorted(range(len(similarities)), key=lambda i: similarities[i], reverse=True)[:n_results]
+        top_indices = np.argsort(similarities)[::-1][:n_results]
         
         result = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
         
@@ -147,7 +170,7 @@ class SimpleVectorDB:
             
         return result
 
-# Initialize our simple vector database
+# Initialize our vector database
 @st.cache_resource
 def get_vector_db():
     return SimpleVectorDB()
@@ -155,44 +178,52 @@ def get_vector_db():
 # Get or create the database
 db = get_vector_db()
 
-# Sample data for demo purposes - in a real app, you'd load this from files
-sample_subtitles = [
-    "I am Groot. I am Groot. I am Groot.",
-    "May the Force be with you.",
-    "Houston, we have a problem.",
-    "My precious... my precious...",
-    "Life is like a box of chocolates.",
-    "I'll be back.",
-    "Bond. James Bond.",
-    "There's no place like home.",
-    "E.T. phone home.",
-    "To infinity and beyond!"
-]
+# Load sample subtitle data
+def load_sample_data():
+    """Load sample subtitle data for demonstration purposes"""
+    # Extended sample data with longer quotes
+    sample_subtitles = [
+        "I am Groot. I am Groot. I am Groot. We are Groot. I am Groot. I am Groot. We are Groot.",
+        "May the Force be with you. The Force will be with you, always. I am your father. Do or do not, there is no try.",
+        "Houston, we have a problem. Failure is not an option. One small step for man, one giant leap for mankind.",
+        "My precious... my precious... Filthy little hobbitses. They stole it from us! We wants it back! The precious!",
+        "Life is like a box of chocolates, you never know what you're gonna get. Run, Forrest, run! Stupid is as stupid does.",
+        "I'll be back. Hasta la vista, baby. Come with me if you want to live. It's in your nature to destroy yourselves.",
+        "Bond. James Bond. Shaken, not stirred. The name's Bond, James Bond. I never miss.",
+        "There's no place like home. Follow the yellow brick road. I'll get you, my pretty, and your little dog, too!",
+        "E.T. phone home. E.T. home phone. Be good. I'll be right here.",
+        "To infinity and beyond! You've got a friend in me. This isn't flying, this is falling with style!"
+    ]
 
-sample_metadata = [
-    {"subtitle_name": "Guardians of the Galaxy", "subtitle_id": "12345", "year": "2014", "genre": "Sci-Fi"},
-    {"subtitle_name": "Star Wars", "subtitle_id": "23456", "year": "1977", "genre": "Sci-Fi"},
-    {"subtitle_name": "Apollo 13", "subtitle_id": "34567", "year": "1995", "genre": "Drama"},
-    {"subtitle_name": "The Lord of the Rings", "subtitle_id": "45678", "year": "2001", "genre": "Fantasy"},
-    {"subtitle_name": "Forrest Gump", "subtitle_id": "56789", "year": "1994", "genre": "Drama"},
-    {"subtitle_name": "The Terminator", "subtitle_id": "67890", "year": "1984", "genre": "Action"},
-    {"subtitle_name": "James Bond Series", "subtitle_id": "78901", "year": "1962", "genre": "Action"},
-    {"subtitle_name": "The Wizard of Oz", "subtitle_id": "89012", "year": "1939", "genre": "Fantasy"},
-    {"subtitle_name": "E.T.", "subtitle_id": "90123", "year": "1982", "genre": "Sci-Fi"},
-    {"subtitle_name": "Toy Story", "subtitle_id": "01234", "year": "1995", "genre": "Animation"}
-]
+    sample_metadata = [
+        {"subtitle_name": "Guardians of the Galaxy", "subtitle_id": "12345", "year": "2014", "genre": "Sci-Fi"},
+        {"subtitle_name": "Star Wars", "subtitle_id": "23456", "year": "1977", "genre": "Sci-Fi"},
+        {"subtitle_name": "Apollo 13", "subtitle_id": "34567", "year": "1995", "genre": "Drama"},
+        {"subtitle_name": "The Lord of the Rings", "subtitle_id": "45678", "year": "2001", "genre": "Fantasy"},
+        {"subtitle_name": "Forrest Gump", "subtitle_id": "56789", "year": "1994", "genre": "Drama"},
+        {"subtitle_name": "The Terminator", "subtitle_id": "67890", "year": "1984", "genre": "Action"},
+        {"subtitle_name": "James Bond Series", "subtitle_id": "78901", "year": "1962", "genre": "Action"},
+        {"subtitle_name": "The Wizard of Oz", "subtitle_id": "89012", "year": "1939", "genre": "Fantasy"},
+        {"subtitle_name": "E.T.", "subtitle_id": "90123", "year": "1982", "genre": "Sci-Fi"},
+        {"subtitle_name": "Toy Story", "subtitle_id": "01234", "year": "1995", "genre": "Animation"}
+    ]
+    
+    # Process each subtitle document
+    for i, subtitle in enumerate(sample_subtitles):
+        # Add document chunks instead of full documents for better search results
+        db.add_chunks(subtitle, sample_metadata[i], chunk_size=10, overlap=3)
 
 # Add sample data if the database is empty
 if not db.documents:
     try:
         db.initialize_model()
-        db.add(sample_subtitles, sample_metadata)
+        load_sample_data()
     except Exception as e:
         st.error(f"Error loading sample data: {str(e)}")
         # Continue without sample data
 
 def transcribe_audio(audio_file):
-    """Transcribes audio using AssemblyAI with enhanced error handling and profiling."""
+    """Transcribes audio using AssemblyAI with enhanced error handling and profiling"""
     if audio_file is None:
         return "Please upload an audio file.", None, None, None
     
@@ -248,17 +279,21 @@ def transcribe_audio(audio_file):
         return error_msg, None, None, time.time() - start_time
 
 def retrieve_and_display_results(query, top_n):
-    """Retrieves top N subtitle search results based on query with enhanced metrics."""
+    """Retrieves top N subtitle search results based on query with enhanced metrics"""
     if not query:
         return json.dumps([{"Result": "No transcription text available for search."}], indent=4)
 
     try:
+        # Make sure the database model is initialized
         db.initialize_model()
+        
+        # Generate embedding for the query
         query_embedding = db.model.encode([query], show_progress_bar=False).tolist()
 
+        # Search for similar subtitles
         results = db.query(
             query_embeddings=query_embedding,
-            n_results=min(top_n, 10)  # Limit to available results
+            n_results=min(top_n, len(db.documents))  # Limit to available results
         )
 
         return format_results_as_json(results)
@@ -268,32 +303,42 @@ def retrieve_and_display_results(query, top_n):
         return json.dumps([{"Result": error_msg}], indent=4)
 
 def format_results_as_json(results):
-    """Formats retrieved subtitle search results with enhanced information."""
+    """Formats retrieved subtitle search results with enhanced information"""
     formatted_results = []
 
     if results and "documents" in results and results["documents"] and len(results["documents"][0]) > 0:
+        # Group results by subtitle_id to deduplicate and merge chunks
+        grouped_results = {}
+        
         for i in range(len(results["documents"][0])):
             subtitle_text = results["documents"][0][i]
             metadata = results["metadatas"][0][i]
-            subtitle_name = metadata.get("subtitle_name", "Unknown")
-            subtitle_id = metadata.get("subtitle_id", "N/A")
-            year = metadata.get("year", "Unknown")
-            genre = metadata.get("genre", "Unknown")
+            similarity_score = results["distances"][0][i] if "distances" in results else 0
             
-            # Get similarity score if available
-            similarity_score = None
-            if "distances" in results and results["distances"] and len(results["distances"][0]) > i:
-                similarity_score = results["distances"][0][i]
-                
-            url = f"https://www.opensubtitles.org/en/subtitles/{subtitle_id}"
-
+            subtitle_id = metadata.get("subtitle_id", "unknown")
+            
+            # Initialize group or update if score is higher
+            if subtitle_id not in grouped_results or similarity_score > grouped_results[subtitle_id]["score"]:
+                grouped_results[subtitle_id] = {
+                    "subtitle_name": metadata.get("subtitle_name", "Unknown"),
+                    "subtitle_id": subtitle_id,
+                    "year": metadata.get("year", "Unknown"),
+                    "genre": metadata.get("genre", "Unknown"),
+                    "score": similarity_score,
+                    "text": subtitle_text
+                }
+        
+        # Format the grouped results
+        for i, (_, result) in enumerate(sorted(grouped_results.items(), key=lambda x: x[1]["score"], reverse=True)):
+            url = f"https://www.opensubtitles.org/en/subtitles/{result['subtitle_id']}"
+            
             formatted_results.append({
                 "Result": i + 1,
-                "Similarity": f"{similarity_score:.4f}" if similarity_score is not None else "N/A",
-                "Media Title": subtitle_name.upper(),
-                "Year": year,
-                "Genre": genre,
-                "Quote": subtitle_text,
+                "Similarity": f"{result['score']:.4f}",
+                "Media Title": result["subtitle_name"].upper(),
+                "Year": result["year"],
+                "Genre": result["genre"],
+                "Quote": result["text"],
                 "URL": url,
             })
 
@@ -302,14 +347,14 @@ def format_results_as_json(results):
     return json.dumps([{"Result": "No matching subtitles found"}], indent=4)
 
 def clear_all():
-    """Clears the transcribed text and search results."""
+    """Clears the transcribed text and search results"""
     st.session_state.transcribed_text = ""
     st.session_state.search_results = "{}"
     st.session_state.confidence_score = None
     st.session_state.processing_time = None
 
 def save_search_history(query, results_json):
-    """Saves search query and timestamp to history."""
+    """Saves search query and timestamp to history"""
     try:
         results = json.loads(results_json)
         first_result = results[0] if results and len(results) > 0 else {"Media Title": "No results"}
@@ -331,7 +376,7 @@ def save_search_history(query, results_json):
         pass
 
 def display_metrics():
-    """Displays performance metrics in a dashboard-like layout."""
+    """Displays performance metrics in a dashboard-like layout"""
     if st.session_state.processing_time or st.session_state.confidence_score:
         col1, col2 = st.columns(2)
         
@@ -345,7 +390,7 @@ def display_metrics():
                 st.metric("Transcription Confidence", f"{confidence_pct:.1f}%")
 
 def display_search_history():
-    """Displays search history in a tabular format with visualization."""
+    """Displays search history in a tabular format with visualization"""
     if not st.session_state.search_history:
         st.info("No search history available yet.")
         return
@@ -382,13 +427,13 @@ def display_search_history():
             pass
 
 def display_theme_customization():
-    """Provides theme customization options."""
+    """Provides theme customization options"""
     st.sidebar.subheader("🎨 Theme Customization")
     
     themes = {
         "Default": {"primary": "#F63366", "background": "#FFFFFF", "text": "#262730"},
         "Dark Mode": {"primary": "#00CCFF", "background": "#262730", "text": "#FAFAFA"},
-        "Nature": {"primary": "#4CAF50", "background": "#F1F8E9", "text": "#1B5E20"},
+        "Cinema": {"primary": "#FF5722", "background": "#121212", "text": "#FAFAFA"},
         "Ocean": {"primary": "#2196F3", "background": "#E3F2FD", "text": "#0D47A1"}
     }
     
@@ -415,8 +460,8 @@ def display_theme_customization():
     st.markdown(css, unsafe_allow_html=True)
 
 def main():
-    st.title("🎵 Advanced Audio Recognition System")
-    st.markdown("### Identify and search for media quotes from audio clips")
+    st.title("🎬 Video Subtitle Search Engine")
+    st.markdown("### Find movie and TV quotes from audio clips")
     
     # Apply theme customization
     display_theme_customization()
@@ -434,6 +479,8 @@ def main():
                 min_confidence = st.slider("Minimum Confidence Threshold:", min_value=0.0, max_value=1.0, value=0.3, step=0.05)
                 lang_options = ["English", "Spanish", "French", "German", "Japanese"]
                 selected_lang = st.selectbox("Audio Language:", lang_options, index=0)
+                chunk_size = st.slider("Chunk Size:", min_value=5, max_value=50, value=10)
+                overlap = st.slider("Chunk Overlap:", min_value=0, max_value=10, value=3)
                 
                 # Map selected language to language code
                 lang_codes = {"English": "en", "Spanish": "es", "French": "fr", "German": "de", "Japanese": "ja"}
@@ -459,6 +506,7 @@ def main():
                                 progress_bar.progress((i+1)*10)
                                 time.sleep(0.1)
                                 
+                            # Transcribe the audio
                             transcribed_text, raw_text, confidence, proc_time = transcribe_audio(audio_input)
                             st.session_state.transcribed_text = transcribed_text
                             st.session_state.confidence_score = confidence
@@ -466,6 +514,7 @@ def main():
                             
                             progress_bar.progress(70)
                             
+                            # If transcription succeeded, perform search
                             if transcribed_text and not transcribed_text.startswith("Error"):
                                 result_json = retrieve_and_display_results(transcribed_text, top_n_results)
                                 st.session_state.search_results = result_json
@@ -531,22 +580,21 @@ def main():
     with tab3:
         st.subheader("About This Application")
         st.markdown("""
-        ### Advanced Audio Recognition System
+        ### Video Subtitle Search Engine
         
-        This application allows you to identify movie quotes, famous lines, and other media content from audio clips. 
+        This application allows you to identify movie quotes, famous lines, and other media content from audio clips. It's like Shazam, but for movie and TV show quotes!
         
         #### How It Works:
-        1. Upload an audio clip containing speech
-        2. Our system transcribes the speech into text
-        3. The transcribed text is compared against a database of movie quotes and subtitles
-        4. Matching results are displayed with details about the source media
+        1. **Audio Transcription**: Upload an audio clip containing speech, which is then transcribed using AssemblyAI's API.
+        2. **Semantic Search**: The transcribed text is compared against a database of movie quotes and subtitles using sentence embeddings.
+        3. **Vector Similarity**: We use cosine similarity between vector embeddings to find the most relevant matches.
+        4. **Document Chunking**: Long documents are broken into smaller chunks with overlap to improve search accuracy.
         
-        #### Features:
-        - Real-time audio transcription using AssemblyAI
-        - Semantic search for finding approximate matches, not just exact quotes
-        - Confidence scoring and processing metrics
-        - Search history tracking and visualization
-        - Customizable theme and appearance
+        #### Technical Implementation:
+        - **Sentence Embeddings**: Using BERT-based models from SentenceTransformers to create semantic representations
+        - **Document Chunking**: Breaking subtitles into smaller, overlapping pieces to enhance search precision
+        - **Vector Database**: Storing and querying vector embeddings efficiently
+        - **Semantic vs. Keyword Search**: Going beyond exact keyword matching to understand context and meaning
         
         #### Limitations:
         - The demo version uses a small sample database
@@ -554,10 +602,10 @@ def main():
         - Currently optimized for English language content
         
         #### Future Enhancements:
-        - Expanded media database with thousands of movies and TV shows
-        - Music recognition capabilities
+        - Integration with subtitle databases
         - Real-time streaming audio analysis
         - Multi-language support
+        - Advanced filtering by genre, year, and more
         """)
 
 if __name__ == "__main__":
