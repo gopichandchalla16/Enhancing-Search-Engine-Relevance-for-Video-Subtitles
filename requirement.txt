@@ -1,0 +1,8 @@
+streamlit
+numpy
+json5
+assemblyai
+sentence-transformers
+plotly
+pandas
+datetime
