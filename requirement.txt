@@ -1,2 +1,6 @@
-streamlit
-plotly
+streamlit>=1.24.0
+pandas>=1.5.0
+numpy>=1.22.0
+plotly>=5.13.0
+sentence-transformers>=2.2.2
+assemblyai>=0.10.0
