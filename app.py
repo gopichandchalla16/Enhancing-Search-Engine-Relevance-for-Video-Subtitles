@@ -4,7 +4,7 @@ import tempfile
 import os
 from pydub import AudioSegment
 
-# Cache the Whisper model to avoid reloading it
+# Cache the Whisper model to avoid reloading
 @st.cache_resource
 def load_model():
     try:
