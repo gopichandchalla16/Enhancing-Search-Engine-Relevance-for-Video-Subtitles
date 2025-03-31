@@ -4,4 +4,5 @@ torch==2.0.1  # Ensure compatibility with your CUDA version
 pydub==0.25.1
 numpy==1.24.3
 ffmpeg-python==0.2.0
-transformers==4.30.2 # for whisper to work fine in streamlit
+transformers==4.30.2
+python-dotenv==1.0.0
