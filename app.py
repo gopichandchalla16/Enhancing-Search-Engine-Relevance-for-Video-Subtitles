@@ -17,6 +17,8 @@ if "search_results" not in st.session_state:
     st.session_state.search_results = ""
 if "processing" not in st.session_state:
     st.session_state.processing = False
+if "chroma_failed" not in st.session_state:
+    st.session_state.chroma_failed = False
 
 # Load AssemblyAI API key from Streamlit secrets
 try:
@@ -25,17 +27,18 @@ except KeyError:
     st.error("❌ AssemblyAI API key not found. Please set it in Streamlit secrets as 'ASSEMBLYAI_API_KEY'.")
     st.stop()
 
-# ChromaDB Setup with error handling
+# ChromaDB Setup with detailed error handling
 try:
     chroma_settings = chromadb.config.Settings(
         is_persistent=False,
-        anonymized_telemetry=False  # Disable telemetry for simplicity
+        anonymized_telemetry=False
     )
     client = chromadb.Client(chroma_settings)
     collection = client.get_or_create_collection(name="subtitle_chunks")
 except Exception as e:
-    st.error(f"Failed to initialize ChromaDB: {str(e)}. Using minimal functionality.")
-    # Fallback: Initialize with basic in-memory client
+    st.error(f"ChromaDB initialization failed: {str(e)}. Falling back to demo mode.")
+    st.session_state.chroma_failed = True
+    # Fallback: Use a dummy collection with pre-loaded data
     client = chromadb.Client()
     collection = client.get_or_create_collection(name="subtitle_chunks")
 
@@ -68,7 +71,7 @@ def initialize_sample_data():
                 ids=ids
             )
         except Exception as e:
-            st.warning(f"Failed to initialize sample data: {str(e)}. Search functionality may be limited.")
+            st.warning(f"Failed to initialize sample data: {str(e)}. Search may be limited.")
     return collection
 
 # Initialize sample data
@@ -186,6 +189,8 @@ def main():
         # Status indicator
         if st.session_state.processing:
             st.info("Processing... Please wait.")
+        if st.session_state.chroma_failed:
+            st.warning("Running in demo mode due to ChromaDB issues. Search limited to sample data.")
 
 if __name__ == "__main__":
     main()
