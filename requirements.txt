@@ -1,6 +1,4 @@
-streamlit
-numpy
-assemblyai
-sentence-transformers
-plotly
-pandas
+streamlit==1.25.0
+whisper==1.0
+pydub==0.25.1
+torch==2.0.1  # Required for Whisper model
