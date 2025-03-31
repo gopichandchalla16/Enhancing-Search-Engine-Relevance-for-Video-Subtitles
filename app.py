@@ -6,6 +6,7 @@ from sentence_transformers import SentenceTransformer
 import chromadb
 import backoff
 import requests
+import os
 
 # Set page config as the first Streamlit command
 st.set_page_config(page_title="Shazam Clone", layout="wide", page_icon="🎵")
@@ -23,9 +24,14 @@ except KeyError:
     st.error("❌ AssemblyAI API key not found. Please set it in Streamlit Cloud secrets as 'ASSEMBLYAI_API_KEY'.")
     st.stop()
 
-# ChromaDB Setup (in-memory for Streamlit Cloud)
-client = chromadb.Client()  # In-memory client instead of persistent
-collection = client.get_or_create_collection(name="subtitle_chunks")
+# ChromaDB Setup with error handling
+try:
+    client = chromadb.EphemeralClient()  # Using EphemeralClient for in-memory storage
+    collection = client.get_or_create_collection(name="subtitle_chunks")
+except Exception as e:
+    st.error(f"Failed to initialize ChromaDB: {str(e)}. Using in-memory fallback.")
+    client = chromadb.Client()  # Fallback to basic in-memory client
+    collection = client.get_or_create_collection(name="subtitle_chunks")
 
 # Populate with sample data if empty (for demo purposes)
 @st.cache_resource
@@ -64,7 +70,6 @@ def load_embedding_model():
     """Loads the SentenceTransformer model with retry logic."""
     try:
         with st.spinner("Loading embedding model (this may take a moment)..."):
-            # Check connectivity to Hugging Face
             response = requests.get("https://huggingface.co", timeout=10)
             if response.status_code != 200:
                 raise Exception("Cannot reach Hugging Face servers.")
@@ -72,8 +77,7 @@ def load_embedding_model():
     except Exception as e:
         st.error(
             f"Failed to load embedding model: {str(e)}. "
-            "Please check your internet connection, wait a moment, and reboot the app. "
-            "If the issue persists, contact support."
+            "Please check your internet connection, wait a moment, and reboot the app."
         )
         st.stop()
 
@@ -82,8 +86,8 @@ def transcribe_audio(audio_file):
     if audio_file is None:
         return "Please upload an audio file."
     
+    temp_file = "temp_audio_file"
     try:
-        temp_file = "temp_audio_file"
         with open(temp_file, "wb") as f:
             f.write(audio_file.getbuffer())
         
@@ -91,10 +95,12 @@ def transcribe_audio(audio_file):
         transcriber = aai.Transcriber(config=config)
         transcript = transcriber.transcribe(temp_file)
         
-        os.remove(temp_file)
-        return transcript.text
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        return transcript.text if transcript.text else "No transcription available"
     except Exception as e:
-        os.remove(temp_file) if os.path.exists(temp_file) else None
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
         return f"Error: {str(e)}"
 
 def retrieve_and_display_results(query, top_n):
@@ -167,7 +173,7 @@ def main():
     
     if st.button("🧹 Clear All"):
         clear_all()
-        st.rerun()  # Updated from st.experimental_rerun() to st.rerun() for newer Streamlit versions
+        st.rerun()
 
 if __name__ == "__main__":
     main()
