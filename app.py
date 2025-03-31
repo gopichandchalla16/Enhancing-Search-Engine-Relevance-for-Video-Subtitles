@@ -45,7 +45,7 @@ aai.settings.api_key = get_api_key()
 
 # Create a simple in-memory database instead of using ChromaDB
 class SimpleVectorDB:
-    def _init_(self):
+    def __init__(self):  # Fixed: Changed _init_ to __init__
         self.documents = []
         self.embeddings = []
         self.metadata = []
@@ -130,7 +130,7 @@ if not db.documents:
 def transcribe_audio(audio_file):
     """Transcribes audio using AssemblyAI with enhanced error handling and profiling."""
     if audio_file is None:
-        return "Please upload an audio file.", None, None
+        return "Please upload an audio file.", None, None, None
     
     start_time = time.time()
     
@@ -496,5 +496,5 @@ def main():
         - Multi-language support
         """)
 
-if _name_ == "_main_":
+if __name__ == "__main__":  # Fixed: Changed _name_ to __name__
     main()
