@@ -1,7 +1,7 @@
 streamlit
+assemblyai
 numpy
 json5
-assemblyai
 sentence-transformers
 plotly
 pandas
