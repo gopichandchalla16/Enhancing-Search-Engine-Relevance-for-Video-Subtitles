@@ -4,10 +4,11 @@ import os
 import subprocess
 from pathlib import Path
 import whisper
+from pydub import AudioSegment  # Added fallback conversion
 
 # Page config
 st.set_page_config(
-    page_title="Audio to Subtitles Converter",
+    page_title="Audio to Subtitles",
     page_icon="🎙️",
     layout="centered"
 )
@@ -32,13 +33,15 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# FFmpeg setup
+# FFmpeg check with fallback
 def setup_ffmpeg():
     try:
         result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True)
         return result.returncode == 0
     except:
         return False
+
+FFMPEG_AVAILABLE = setup_ffmpeg()
 
 # Core functions
 @st.cache_resource
@@ -47,9 +50,20 @@ def load_model(model_size="base"):
 
 def convert_to_wav(input_path):
     wav_path = input_path + ".wav"
-    cmd = ["ffmpeg", "-i", input_path, "-ar", "16000", "-ac", "1", wav_path, "-y"]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    return wav_path if result.returncode == 0 else None
+    try:
+        if FFMPEG_AVAILABLE:
+            cmd = ["ffmpeg", "-i", input_path, "-ar", "16000", "-ac", "1", wav_path, "-y"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            return wav_path if result.returncode == 0 else None
+        else:
+            # Fallback to pydub
+            audio = AudioSegment.from_file(input_path)
+            audio = audio.set_frame_rate(16000).set_channels(1)
+            audio.export(wav_path, format="wav")
+            return wav_path
+    except Exception as e:
+        st.error(f"Audio conversion failed: {e}")
+        return None
 
 def format_timestamp(seconds):
     ms = int((seconds % 1) * 1000)
@@ -76,10 +90,9 @@ def main():
     st.markdown('<div class="title">🎙️ Audio to Subtitles</div>', unsafe_allow_html=True)
     st.markdown('<div class="subtitle">Convert your audio files to SRT subtitles</div>', unsafe_allow_html=True)
 
-    # FFmpeg check
-    if not setup_ffmpeg():
-        st.error("FFmpeg not found! Please install it:\n- Ubuntu: `sudo apt install ffmpeg`\n- macOS: `brew install ffmpeg`\n- Windows: Download from ffmpeg.org")
-        return
+    # FFmpeg status
+    if not FFMPEG_AVAILABLE:
+        st.warning("FFmpeg not found - using fallback conversion method. For better performance, install FFmpeg.")
 
     # File uploader
     audio_file = st.file_uploader("Upload Audio File", type=["mp3", "wav", "m4a"])
@@ -88,13 +101,13 @@ def main():
         # Settings
         col1, col2 = st.columns(2)
         with col1:
-            model_size = st.selectbox("Model Size", ["tiny", "base", "small", "medium", "large"], index=1)
+            model_size = st.selectbox("Model Size", ["tiny", "base", "small"], index=1)
         with col2:
-            language = st.selectbox("Language", ["Auto-detect", "English", "Spanish", "French"], index=0)
+            language = st.selectbox("Language", ["Auto-detect", "English"], index=0)
 
         # Transcribe button
         if st.button("Convert to Subtitles"):
-            with st.spinner("Processing..."):
+            with st.spinner("Processing audio..."):
                 # Save temp file
                 with tempfile.NamedTemporaryFile(delete=False, suffix=Path(audio_file.name).suffix) as tmp:
                     tmp.write(audio_file.read())
@@ -103,7 +116,6 @@ def main():
                 # Convert to WAV
                 wav_path = convert_to_wav(tmp_path)
                 if not wav_path:
-                    st.error("Audio conversion failed!")
                     os.unlink(tmp_path)
                     return
 
