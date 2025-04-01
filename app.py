@@ -22,30 +22,131 @@ THEMES = {
     "Forest": {"primary": "#27ae60", "background": "#f1f8e9", "text": "#2d572c", "secondary": "#dcedc8"}
 }
 
-# Custom CSS
+# Enhanced Custom CSS
 def apply_theme(theme):
     css = f"""
     <style>
-    .title {{ color: {theme['text']}; font-size: 2.5em; text-align: center; }}
-    .subtitle {{ color: {theme['text']}; text-align: center; opacity: 0.7; }}
-    .stButton>button {{ 
-        background-color: {theme['primary']}; 
-        color: white; 
-        width: 100%;
-        border-radius: 5px;
+    /* Global styles */
+    body {{ 
+        background-color: {theme['background']}; 
+        font-family: 'Poppins', sans-serif; 
     }}
+    
+    /* Title and subtitle */
+    .title {{ 
+        color: {theme['text']}; 
+        font-size: 2.8em; 
+        text-align: center; 
+        font-weight: 700; 
+        margin-top: 20px;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+    }}
+    .subtitle {{ 
+        color: {theme['text']}; 
+        text-align: center; 
+        opacity: 0.8; 
+        font-size: 1.2em; 
+        margin-bottom: 30px;
+    }}
+
+    /* File uploader */
+    .stFileUploader {{
+        border: 2px dashed {theme['primary']};
+        border-radius: 10px;
+        padding: 20px;
+        background-color: {theme['secondary']};
+        transition: all 0.3s ease;
+    }}
+    .stFileUploader:hover {{
+        border-color: {theme['text']};
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }}
+
+    /* Buttons */
+    .stButton>button {{ 
+        background: linear-gradient(45deg, {theme['primary']}, {theme['text']}); 
+        color: white; 
+        width: 100%; 
+        border-radius: 8px; 
+        padding: 12px 24px;
+        font-size: 1.1em;
+        font-weight: 600;
+        border: none;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }}
+    .stButton>button:hover {{ 
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    }}
+
+    /* Success box */
     .success-box {{ 
         background-color: {theme['secondary']}; 
-        padding: 15px; 
-        border-radius: 5px;
-        margin-top: 20px;
+        padding: 20px; 
+        border-radius: 12px; 
+        margin-top: 30px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        border-left: 5px solid {theme['primary']};
     }}
-    body {{ background-color: {theme['background']}; }}
+
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 20px;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        background-color: {theme['secondary']};
+        border-radius: 8px;
+        padding: 10px 20px;
+        color: {theme['text']};
+        transition: all 0.3s ease;
+    }}
+    .stTabs [data-baseweb="tab"]:hover {{
+        background-color: {theme['primary']};
+        color: white;
+    }}
+
+    /* Sidebar */
+    .css-1d391kg {{
+        background-color: {theme['secondary']};
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    }}
+    .stSlider > div > div > div > div {{
+        background-color: {theme['primary']};
+    }}
+
+    /* Footer */
+    footer {{
+        text-align: center; 
+        padding: 20px; 
+        color: {theme['text']}; 
+        opacity: 0.7;
+        font-size: 0.9em;
+    }}
+
+    /* Waveform */
+    .stImage {{
+        background-color: {theme['secondary']};
+        padding: 10px;
+        border-radius: 8px;
+        margin: 20px 0;
+    }}
+
+    /* Select boxes */
+    .stSelectbox > div > div {{
+        background-color: {theme['secondary']};
+        border-radius: 6px;
+        padding: 8px;
+    }}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
+    # Add Google Fonts for better typography
+    st.markdown('<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">', unsafe_allow_html=True)
 
-# Core functions
+# Core functions (unchanged)
 @st.cache_resource
 def load_model(model_size="base"):
     return whisper.load_model(model_size)
