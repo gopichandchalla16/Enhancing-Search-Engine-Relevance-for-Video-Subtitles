@@ -3,10 +3,10 @@ import tempfile
 import os
 from pathlib import Path
 import whisper
-import io
+import librosa
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.io import wavfile
+import io
 
 # Page config
 st.set_page_config(
@@ -33,7 +33,6 @@ def apply_theme(theme):
         color: white; 
         width: 100%;
         border-radius: 5px;
-        border: none;
     }}
     .success-box {{ 
         background-color: {theme['secondary']}; 
@@ -52,20 +51,16 @@ def load_model(model_size="base"):
     return whisper.load_model(model_size)
 
 def convert_to_wav(audio_bytes, original_ext):
-    """Convert audio to WAV without FFmpeg dependency"""
+    """Convert audio to WAV using librosa"""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=original_ext) as tmp:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
         
-        # Use scipy for WAV, fallback to simple copy for other formats
-        if original_ext.lower() == ".wav":
-            wav_path = tmp_path
-        else:
-            wav_path = tmp_path + ".wav"
-            # Basic conversion using scipy (limited format support)
-            sample_rate, data = wavfile.read(tmp_path) if original_ext == ".wav" else (16000, np.frombuffer(audio_bytes, dtype=np.int16))
-            wavfile.write(wav_path, 16000, data.astype(np.int16))
+        # Load audio with librosa and convert to WAV
+        y, sr = librosa.load(tmp_path, sr=16000, mono=True)
+        wav_path = tmp_path + ".wav"
+        librosa.output.write_wav(wav_path, y, sr)  # Note: librosa.output is deprecated, but kept for compatibility
         
         return wav_path, tmp_path
     except Exception as e:
@@ -94,11 +89,9 @@ def generate_srt(segments, filename):
 
 def generate_waveform(audio_path):
     try:
-        sample_rate, data = wavfile.read(audio_path)
-        if len(data.shape) > 1:
-            data = data.mean(axis=1)  # Convert to mono
+        y, sr = librosa.load(audio_path, sr=16000, mono=True)
         plt.figure(figsize=(10, 2))
-        plt.plot(np.linspace(0, len(data)/sample_rate, len(data)), data, color=THEMES[st.session_state.theme]["primary"])
+        plt.plot(np.linspace(0, len(y)/sr, len(y)), y, color=THEMES[st.session_state.theme]["primary"])
         plt.axis("off")
         buf = io.BytesIO()
         plt.savefig(buf, format="png", bbox_inches="tight", transparent=True)
@@ -123,7 +116,7 @@ def main():
     # Sidebar features
     with st.sidebar:
         st.header("Options")
-        confidence_threshold = st.slider("Confidence Threshold", 0.0, 1.0, 0.7, help="Minimum confidence for transcription")
+        confidence_threshold = st.slider("Confidence Threshold", 0.0, 1.0, 0.7)
 
     # File uploader
     audio_file = st.file_uploader(
@@ -133,7 +126,6 @@ def main():
     )
 
     if audio_file:
-        # Display file info
         st.write(f"📄 **File:** {audio_file.name} ({audio_file.size / 1024:.1f}KB)")
 
         # Settings
