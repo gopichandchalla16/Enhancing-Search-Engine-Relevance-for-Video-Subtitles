@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import whisper
 import librosa
+import soundfile as sf
 import numpy as np
 import matplotlib.pyplot as plt
 import io
@@ -51,16 +52,16 @@ def load_model(model_size="base"):
     return whisper.load_model(model_size)
 
 def convert_to_wav(audio_bytes, original_ext):
-    """Convert audio to WAV using librosa"""
+    """Convert audio to WAV using librosa and soundfile"""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=original_ext) as tmp:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
         
-        # Load audio with librosa and convert to WAV
+        # Load audio with librosa and write WAV with soundfile
         y, sr = librosa.load(tmp_path, sr=16000, mono=True)
         wav_path = tmp_path + ".wav"
-        librosa.output.write_wav(wav_path, y, sr)  # Note: librosa.output is deprecated, but kept for compatibility
+        sf.write(wav_path, y, sr, subtype='PCM_16')
         
         return wav_path, tmp_path
     except Exception as e:
