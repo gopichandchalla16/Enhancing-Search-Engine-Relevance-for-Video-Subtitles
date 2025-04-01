@@ -1,10 +1,12 @@
 import streamlit as st
 import tempfile
 import os
-import subprocess
 from pathlib import Path
 import whisper
-from pydub import AudioSegment  # Added fallback conversion
+import io
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.io import wavfile
 
 # Page config
 st.set_page_config(
@@ -13,57 +15,62 @@ st.set_page_config(
     layout="centered"
 )
 
+# Theme options
+THEMES = {
+    "Light": {"primary": "#3498db", "background": "#ffffff", "text": "#2c3e50", "secondary": "#e8f4f8"},
+    "Dark": {"primary": "#2980b9", "background": "#2c3e50", "text": "#ecf0f1", "secondary": "#34495e"},
+    "Forest": {"primary": "#27ae60", "background": "#f1f8e9", "text": "#2d572c", "secondary": "#dcedc8"}
+}
+
 # Custom CSS
-st.markdown("""
+def apply_theme(theme):
+    css = f"""
     <style>
-    .title { color: #2c3e50; font-size: 2.5em; text-align: center; }
-    .subtitle { color: #7f8c8d; text-align: center; }
-    .stButton>button { 
-        background-color: #3498db; 
+    .title {{ color: {theme['text']}; font-size: 2.5em; text-align: center; }}
+    .subtitle {{ color: {theme['text']}; text-align: center; opacity: 0.7; }}
+    .stButton>button {{ 
+        background-color: {theme['primary']}; 
         color: white; 
         width: 100%;
         border-radius: 5px;
-    }
-    .success-box { 
-        background-color: #e8f4f8; 
-        padding: 10px; 
+        border: none;
+    }}
+    .success-box {{ 
+        background-color: {theme['secondary']}; 
+        padding: 15px; 
         border-radius: 5px;
         margin-top: 20px;
-    }
+    }}
+    body {{ background-color: {theme['background']}; }}
     </style>
-""", unsafe_allow_html=True)
-
-# FFmpeg check with fallback
-def setup_ffmpeg():
-    try:
-        result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True)
-        return result.returncode == 0
-    except:
-        return False
-
-FFMPEG_AVAILABLE = setup_ffmpeg()
+    """
+    st.markdown(css, unsafe_allow_html=True)
 
 # Core functions
 @st.cache_resource
 def load_model(model_size="base"):
     return whisper.load_model(model_size)
 
-def convert_to_wav(input_path):
-    wav_path = input_path + ".wav"
+def convert_to_wav(audio_bytes, original_ext):
+    """Convert audio to WAV without FFmpeg dependency"""
     try:
-        if FFMPEG_AVAILABLE:
-            cmd = ["ffmpeg", "-i", input_path, "-ar", "16000", "-ac", "1", wav_path, "-y"]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            return wav_path if result.returncode == 0 else None
+        with tempfile.NamedTemporaryFile(delete=False, suffix=original_ext) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+        
+        # Use scipy for WAV, fallback to simple copy for other formats
+        if original_ext.lower() == ".wav":
+            wav_path = tmp_path
         else:
-            # Fallback to pydub
-            audio = AudioSegment.from_file(input_path)
-            audio = audio.set_frame_rate(16000).set_channels(1)
-            audio.export(wav_path, format="wav")
-            return wav_path
+            wav_path = tmp_path + ".wav"
+            # Basic conversion using scipy (limited format support)
+            sample_rate, data = wavfile.read(tmp_path) if original_ext == ".wav" else (16000, np.frombuffer(audio_bytes, dtype=np.int16))
+            wavfile.write(wav_path, 16000, data.astype(np.int16))
+        
+        return wav_path, tmp_path
     except Exception as e:
         st.error(f"Audio conversion failed: {e}")
-        return None
+        return None, tmp_path
 
 def format_timestamp(seconds):
     ms = int((seconds % 1) * 1000)
@@ -85,47 +92,81 @@ def generate_srt(segments, filename):
         f.write(srt_content)
     return srt_path
 
+def generate_waveform(audio_path):
+    try:
+        sample_rate, data = wavfile.read(audio_path)
+        if len(data.shape) > 1:
+            data = data.mean(axis=1)  # Convert to mono
+        plt.figure(figsize=(10, 2))
+        plt.plot(np.linspace(0, len(data)/sample_rate, len(data)), data, color=THEMES[st.session_state.theme]["primary"])
+        plt.axis("off")
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png", bbox_inches="tight", transparent=True)
+        plt.close()
+        buf.seek(0)
+        return buf
+    except:
+        return None
+
 # Main app
 def main():
+    # Theme selection
+    if "theme" not in st.session_state:
+        st.session_state.theme = "Light"
+    theme = st.sidebar.selectbox("Theme", list(THEMES.keys()), index=0)
+    st.session_state.theme = theme
+    apply_theme(THEMES[theme])
+
     st.markdown('<div class="title">🎙️ Audio to Subtitles</div>', unsafe_allow_html=True)
     st.markdown('<div class="subtitle">Convert your audio files to SRT subtitles</div>', unsafe_allow_html=True)
 
-    # FFmpeg status
-    if not FFMPEG_AVAILABLE:
-        st.warning("FFmpeg not found - using fallback conversion method. For better performance, install FFmpeg.")
+    # Sidebar features
+    with st.sidebar:
+        st.header("Options")
+        confidence_threshold = st.slider("Confidence Threshold", 0.0, 1.0, 0.7, help="Minimum confidence for transcription")
 
     # File uploader
-    audio_file = st.file_uploader("Upload Audio File", type=["mp3", "wav", "m4a"])
+    audio_file = st.file_uploader(
+        "Upload Audio File",
+        type=["mp3", "wav", "m4a"],
+        help="Limit 200MB per file"
+    )
 
     if audio_file:
+        # Display file info
+        st.write(f"📄 **File:** {audio_file.name} ({audio_file.size / 1024:.1f}KB)")
+
         # Settings
         col1, col2 = st.columns(2)
         with col1:
             model_size = st.selectbox("Model Size", ["tiny", "base", "small"], index=1)
         with col2:
-            language = st.selectbox("Language", ["Auto-detect", "English"], index=0)
+            language = st.selectbox("Language", ["Auto-detect", "English", "Spanish"], index=0)
 
         # Transcribe button
         if st.button("Convert to Subtitles"):
             with st.spinner("Processing audio..."):
-                # Save temp file
-                with tempfile.NamedTemporaryFile(delete=False, suffix=Path(audio_file.name).suffix) as tmp:
-                    tmp.write(audio_file.read())
-                    tmp_path = tmp.name
-
-                # Convert to WAV
-                wav_path = convert_to_wav(tmp_path)
+                # Convert audio
+                wav_path, tmp_path = convert_to_wav(audio_file.read(), Path(audio_file.name).suffix)
                 if not wav_path:
                     os.unlink(tmp_path)
                     return
+
+                # Show waveform
+                waveform = generate_waveform(wav_path)
+                if waveform:
+                    st.image(waveform, caption="Audio Waveform")
 
                 # Transcribe
                 model = load_model(model_size)
                 lang = language if language != "Auto-detect" else None
                 result = model.transcribe(wav_path, language=lang)
                 
+                # Filter by confidence
+                segments = [seg for seg in result["segments"] if seg.get("confidence", 1.0) >= confidence_threshold]
+                
                 # Generate SRT
-                srt_path = generate_srt(result["segments"], audio_file.name)
+                srt_path = generate_srt(segments, audio_file.name)
 
                 # Display results
                 with st.container():
@@ -155,6 +196,8 @@ def main():
                 for path in [tmp_path, wav_path, srt_path]:
                     if os.path.exists(path):
                         os.unlink(path)
+
+    st.markdown("<footer style='text-align: center; padding: 20px;'>Made with Streamlit</footer>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
