@@ -7,6 +7,7 @@ import librosa
 import numpy as np
 import matplotlib.pyplot as plt
 import io
+import json
 
 # Page config
 st.set_page_config(
@@ -26,13 +27,10 @@ THEMES = {
 def apply_theme(theme):
     css = f"""
     <style>
-    /* Global styles */
     body {{ 
         background-color: {theme['background']}; 
         font-family: 'Poppins', sans-serif; 
     }}
-    
-    /* Title and subtitle */
     .title {{ 
         color: {theme['text']}; 
         font-size: 2.8em; 
@@ -48,8 +46,6 @@ def apply_theme(theme):
         font-size: 1.2em; 
         margin-bottom: 30px;
     }}
-
-    /* File uploader */
     .stFileUploader {{
         border: 2px dashed {theme['primary']};
         border-radius: 10px;
@@ -61,8 +57,6 @@ def apply_theme(theme):
         border-color: {theme['text']};
         box-shadow: 0 4px 12px rgba(0,0,0,0.1);
     }}
-
-    /* Buttons */
     .stButton>button {{ 
         background: linear-gradient(45deg, {theme['primary']}, {theme['text']}); 
         color: white; 
@@ -79,8 +73,6 @@ def apply_theme(theme):
         transform: translateY(-2px);
         box-shadow: 0 6px 12px rgba(0,0,0,0.15);
     }}
-
-    /* Success box */
     .success-box {{ 
         background-color: {theme['secondary']}; 
         padding: 20px; 
@@ -89,8 +81,6 @@ def apply_theme(theme):
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         border-left: 5px solid {theme['primary']};
     }}
-
-    /* Tabs */
     .stTabs [data-baseweb="tab-list"] {{
         gap: 20px;
     }}
@@ -105,8 +95,6 @@ def apply_theme(theme):
         background-color: {theme['primary']};
         color: white;
     }}
-
-    /* Sidebar */
     .css-1d391kg {{
         background-color: {theme['secondary']};
         padding: 20px;
@@ -116,8 +104,6 @@ def apply_theme(theme):
     .stSlider > div > div > div > div {{
         background-color: {theme['primary']};
     }}
-
-    /* Footer */
     footer {{
         text-align: center; 
         padding: 20px; 
@@ -125,16 +111,12 @@ def apply_theme(theme):
         opacity: 0.7;
         font-size: 0.9em;
     }}
-
-    /* Waveform */
     .stImage {{
         background-color: {theme['secondary']};
         padding: 10px;
         border-radius: 8px;
         margin: 20px 0;
     }}
-
-    /* Select boxes */
     .stSelectbox > div > div {{
         background-color: {theme['secondary']};
         border-radius: 6px;
@@ -143,16 +125,15 @@ def apply_theme(theme):
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
-    # Add Google Fonts for better typography
     st.markdown('<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">', unsafe_allow_html=True)
 
-# Core functions (unchanged)
+# Core functions
 @st.cache_resource
 def load_model(model_size="base"):
     return whisper.load_model(model_size)
 
-def load_audio_to_array(audio_bytes, original_ext):
-    """Load audio to numpy array using librosa"""
+def load_audio_to_array(audio_bytes, original_ext, reduce_noise=False):
+    """Load audio to numpy array using librosa with optional noise reduction"""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=original_ext) as tmp:
             tmp.write(audio_bytes)
@@ -160,6 +141,11 @@ def load_audio_to_array(audio_bytes, original_ext):
         
         # Load audio with librosa
         y, sr = librosa.load(tmp_path, sr=16000, mono=True)
+        if reduce_noise:
+            # Basic noise reduction using spectral subtraction
+            noise_clip = y[:int(sr * 0.5)]  # Assume first 0.5s is noise
+            noise_profile = np.mean(librosa.feature.rms(y=noise_clip))
+            y = np.where(librosa.feature.rms(y=y) > noise_profile, y, 0)
         return y, sr, tmp_path
     except Exception as e:
         st.error(f"Audio loading failed: {e}")
@@ -214,6 +200,7 @@ def main():
     with st.sidebar:
         st.header("Options")
         confidence_threshold = st.slider("Confidence Threshold", 0.0, 1.0, 0.7)
+        reduce_noise = st.checkbox("Reduce Background Noise", help="Apply basic noise reduction")
 
     # File uploader
     audio_file = st.file_uploader(
@@ -224,6 +211,9 @@ def main():
 
     if audio_file:
         st.write(f"📄 **File:** {audio_file.name} ({audio_file.size / 1024:.1f}KB)")
+        
+        # Audio playback
+        st.audio(audio_file, format=f"audio/{Path(audio_file.name).suffix[1:]}")
 
         # Settings
         col1, col2 = st.columns(2)
@@ -234,30 +224,53 @@ def main():
 
         # Transcribe button
         if st.button("Convert to Subtitles"):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
             with st.spinner("Processing audio..."):
                 # Load audio directly to array
-                audio_data, sr, tmp_path = load_audio_to_array(audio_file.read(), Path(audio_file.name).suffix)
+                status_text.text("Loading audio...")
+                progress_bar.progress(10)
+                audio_data, sr, tmp_path = load_audio_to_array(audio_file.read(), Path(audio_file.name).suffix, reduce_noise)
                 if audio_data is None:
                     os.unlink(tmp_path)
                     return
 
                 # Show waveform
+                status_text.text("Generating waveform...")
+                progress_bar.progress(30)
                 waveform = generate_waveform(audio_data, sr)
                 if waveform:
                     st.image(waveform, caption="Audio Waveform")
 
                 # Transcribe directly with audio array
+                status_text.text("Transcribing audio...")
+                progress_bar.progress(50)
                 model = load_model(model_size)
                 lang = language if language != "Auto-detect" else None
                 result = model.transcribe(audio_data, language=lang)
                 
                 # Filter by confidence
+                status_text.text("Filtering transcription...")
+                progress_bar.progress(70)
                 segments = [seg for seg in result["segments"] if seg.get("confidence", 1.0) >= confidence_threshold]
                 
+                # Editable transcription
+                status_text.text("Preparing results...")
+                progress_bar.progress(90)
+                edited_text = st.text_area("Edit Transcription", result["text"], height=200, key="edit_transcript")
+                if edited_text != result["text"]:
+                    # Update segments with edited text (simplified approach)
+                    segments = [{"start": s["start"], "end": s["end"], "text": t.strip()} 
+                               for s, t in zip(segments, edited_text.splitlines()) 
+                               if t.strip()]
+
                 # Generate SRT
                 srt_path = generate_srt(segments, audio_file.name)
 
                 # Display results
+                progress_bar.progress(100)
+                status_text.text("Done!")
                 with st.container():
                     st.markdown('<div class="success-box">', unsafe_allow_html=True)
                     st.success("Conversion Complete!")
@@ -265,19 +278,36 @@ def main():
                     tabs = st.tabs(["Text", "SRT Preview", "Download"])
                     
                     with tabs[0]:
-                        st.text_area("Transcription", result["text"], height=200)
+                        st.text_area("Transcription", edited_text, height=200)
                     
                     with tabs[1]:
                         with open(srt_path, "r", encoding="utf-8") as f:
                             st.text_area("SRT Preview", f.read(), height=200)
                     
                     with tabs[2]:
-                        with open(srt_path, "rb") as f:
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            with open(srt_path, "rb") as f:
+                                st.download_button(
+                                    "Download SRT",
+                                    f.read(),
+                                    f"{Path(audio_file.name).stem}.srt",
+                                    "text/plain"
+                                )
+                        with col2:
                             st.download_button(
-                                "Download SRT",
-                                f.read(),
-                                f"{Path(audio_file.name).stem}.srt",
+                                "Download TXT",
+                                edited_text.encode(),
+                                f"{Path(audio_file.name).stem}.txt",
                                 "text/plain"
+                            )
+                        with col3:
+                            json_data = json.dumps({"text": edited_text, "segments": segments}, indent=2)
+                            st.download_button(
+                                "Download JSON",
+                                json_data.encode(),
+                                f"{Path(audio_file.name).stem}.json",
+                                "application/json"
                             )
                     st.markdown('</div>', unsafe_allow_html=True)
 
