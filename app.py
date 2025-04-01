@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 import whisper
 import librosa
-import soundfile as sf
 import numpy as np
 import matplotlib.pyplot as plt
 import io
@@ -51,22 +50,19 @@ def apply_theme(theme):
 def load_model(model_size="base"):
     return whisper.load_model(model_size)
 
-def convert_to_wav(audio_bytes, original_ext):
-    """Convert audio to WAV using librosa and soundfile"""
+def load_audio_to_array(audio_bytes, original_ext):
+    """Load audio to numpy array using librosa"""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=original_ext) as tmp:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
         
-        # Load audio with librosa and write WAV with soundfile
+        # Load audio with librosa
         y, sr = librosa.load(tmp_path, sr=16000, mono=True)
-        wav_path = tmp_path + ".wav"
-        sf.write(wav_path, y, sr, subtype='PCM_16')
-        
-        return wav_path, tmp_path
+        return y, sr, tmp_path
     except Exception as e:
-        st.error(f"Audio conversion failed: {e}")
-        return None, tmp_path
+        st.error(f"Audio loading failed: {e}")
+        return None, None, tmp_path
 
 def format_timestamp(seconds):
     ms = int((seconds % 1) * 1000)
@@ -88,11 +84,10 @@ def generate_srt(segments, filename):
         f.write(srt_content)
     return srt_path
 
-def generate_waveform(audio_path):
+def generate_waveform(audio_data, sr):
     try:
-        y, sr = librosa.load(audio_path, sr=16000, mono=True)
         plt.figure(figsize=(10, 2))
-        plt.plot(np.linspace(0, len(y)/sr, len(y)), y, color=THEMES[st.session_state.theme]["primary"])
+        plt.plot(np.linspace(0, len(audio_data)/sr, len(audio_data)), audio_data, color=THEMES[st.session_state.theme]["primary"])
         plt.axis("off")
         buf = io.BytesIO()
         plt.savefig(buf, format="png", bbox_inches="tight", transparent=True)
@@ -139,21 +134,21 @@ def main():
         # Transcribe button
         if st.button("Convert to Subtitles"):
             with st.spinner("Processing audio..."):
-                # Convert audio
-                wav_path, tmp_path = convert_to_wav(audio_file.read(), Path(audio_file.name).suffix)
-                if not wav_path:
+                # Load audio directly to array
+                audio_data, sr, tmp_path = load_audio_to_array(audio_file.read(), Path(audio_file.name).suffix)
+                if audio_data is None:
                     os.unlink(tmp_path)
                     return
 
                 # Show waveform
-                waveform = generate_waveform(wav_path)
+                waveform = generate_waveform(audio_data, sr)
                 if waveform:
                     st.image(waveform, caption="Audio Waveform")
 
-                # Transcribe
+                # Transcribe directly with audio array
                 model = load_model(model_size)
                 lang = language if language != "Auto-detect" else None
-                result = model.transcribe(wav_path, language=lang)
+                result = model.transcribe(audio_data, language=lang)
                 
                 # Filter by confidence
                 segments = [seg for seg in result["segments"] if seg.get("confidence", 1.0) >= confidence_threshold]
@@ -186,9 +181,10 @@ def main():
                     st.markdown('</div>', unsafe_allow_html=True)
 
                 # Cleanup
-                for path in [tmp_path, wav_path, srt_path]:
-                    if os.path.exists(path):
-                        os.unlink(path)
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                if os.path.exists(srt_path):
+                    os.unlink(srt_path)
 
     st.markdown("<footer style='text-align: center; padding: 20px;'>Made with Streamlit</footer>", unsafe_allow_html=True)
 
