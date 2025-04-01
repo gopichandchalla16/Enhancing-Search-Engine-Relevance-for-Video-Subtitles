@@ -142,10 +142,8 @@ def load_audio_to_array(audio_bytes, original_ext, reduce_noise=False):
         # Load audio with librosa
         y, sr = librosa.load(tmp_path, sr=16000, mono=True)
         if reduce_noise:
-            # Basic noise reduction using spectral subtraction
-            noise_clip = y[:int(sr * 0.5)]  # Assume first 0.5s is noise
-            noise_profile = np.mean(librosa.feature.rms(y=noise_clip))
-            y = np.where(librosa.feature.rms(y=y) > noise_profile, y, 0)
+            # Use pre-emphasis to reduce low-level noise (simplified approach)
+            y = librosa.effects.preemphasis(y, coef=0.97)
         return y, sr, tmp_path
     except Exception as e:
         st.error(f"Audio loading failed: {e}")
